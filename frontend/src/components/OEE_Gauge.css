@@ -1,0 +1,8 @@
+.gauge-value {
+    stroke: #389ba8 !important; /* Set the color of the value indicator */
+  }
+  
+  .gauge-track {
+    stroke: #9199c4 !important; /* Set the color of the gauge track */
+  }
+  
