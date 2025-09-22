@@ -1,0 +1,695 @@
+import os
+import pymysql.cursors
+import mysql.connector
+import user_agents
+from flask import Flask, request, render_template, redirect, url_for, session, send_from_directory, render_template_string, jsonify, make_response
+from flask_mysqldb import MySQL
+from datetime import datetime
+from flask_cors import CORS
+from msal import ConfidentialClientApplication
+import requests
+
+app = Flask(__name__)
+CORS(app)
+# MySQL Configuration
+app.config['MYSQL_HOST'] = 'localhost'
+app.config['MYSQL_USER'] = 'root'
+app.config['MYSQL_PASSWORD'] = 'Harsh@123'
+app.config['MYSQL_DB'] = 'Line8'
+
+mysql = MySQL(app)
+
+# Define the directory to store uploaded files
+UPLOAD_FOLDER = 'D:/Projects/Operator मित्र/static'
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+# MySQL Configuration for the second script
+connection = pymysql.connect(
+    host='localhost',
+    user='root',
+    password='Harsh@123',
+    database='line8',
+    cursorclass=pymysql.cursors.DictCursor
+)
+
+def get_db_connection():
+    return pymysql.connect(
+        host='localhost',
+        user='root',
+        password='Harsh@123',
+        database='line8',
+        cursorclass=pymysql.cursors.DictCursor
+    )
+
+connection2 = pymysql.connect(
+    host='localhost',
+    user='root',
+    password='Harsh@123',
+    database='digital_signage',
+    cursorclass=pymysql.cursors.DictCursor
+)
+
+def get_db_connection2():
+    return pymysql.connect(
+        host='localhost',
+        user='root',
+        password='Harsh@123',
+        database='digital_signage',
+        cursorclass=pymysql.cursors.DictCursor
+    )
+
+# Define the structure of departments, lines, cells, and endpoints
+departments = {
+    'Extrusion': {
+        'lines': {
+            'Line 1': ['Uncoiling', 'Looping', 'Taping', 'Roll Forming', 'Induction', 'Co-Extrusion', 'Cooling Trough', 'Main Puller', 'Laser Print', 'Mini Puller', 'Rough Cut'],
+            'Line 2': ['Uncoiling', 'Looping', 'Taping', 'Roll Forming', 'Induction', 'Co-Extrusion', 'Cooling Trough', 'Main Puller', 'Laser Print', 'Plasma', 'Mini Puller', 'Rough Cut'],
+            'Line 3': ['Uncoiling', 'Looping', 'Taping', 'Roll Forming', 'Induction', 'Co-Extrusion', 'Cooling Trough', 'Main Puller', 'Laser Print', 'Mini Puller', 'Rough Cut'],
+            'Line 4': ['Co-Extrusion', 'Cooling Trough', 'Main Puller', 'Laser Print', 'Plasma', 'Mini Puller', 'Rough Cut'],
+            'Line 5': ['Uncoiling', 'Looping', 'Induction', 'Co-Extrusion', 'Cooling Trough', 'Main Puller', 'Laser Print', 'Mini Puller', 'Rough Cut'],
+            'Line 6': ['Uncoiling', 'Looping', 'Induction', 'Co-Extrusion', 'Cooling Trough', 'Main Puller', 'Laser Print', 'Mini Puller', 'Rough Cut'],
+            'Line 8': ['Uncoiling', 'Looping', 'Induction', 'Co-Extrusion', 'Cooling Trough', 'Main Puller', 'Laser Print', 'Mini Puller', 'Rough Cut']
+        }
+    },
+    'Assembly': {
+        'cells': {
+            'Cell 21': ['Notching A', 'Notching B', 'Endcap A','Endcap B', 'CTS_SB', 'Inspection_Packing A','Inspection_Packing B', 'USW'],
+            'Cell 22': ['Notching A', 'Notching B', 'Endcap A','Endcap B', 'CTS_SB', 'Inspection_Packing A','Inspection_Packing B', 'USW']
+        }
+    },
+    'Tool Room': {
+        'section':{
+                'Conventional':      ['Band Saw', 'Milling - 1', 'Milling - 2', 'Milling - 3', 'Milling - 4', 'Surface Grinder - 1', 'Surface Grinder - 2', 'Cylindrical Grinder', 'Lathe Machine - 1', 'Lathe Machine - 2'],
+                'CNC':               ['CNC Lathe', 'EDM Drilling', 'CNC Wirecut - 1', 'CNC Wirecut - 2', 'CNC Milling - 1', 'CNC Milling - 2', 'CNC EDM-1', 'CNC EDM-2', 'Laser Marking'],
+                'Quality Control':   ['CMM', 'Hardness Tester', 'Digimicro Set'],
+                'Assembly':          ['Die Spotting', 'Tapping', 'Chamfering', 'Bench Grinder', 'Muffle Furnace']
+            }
+    }
+
+}
+
+
+
+@app.route('/api/planning', methods=['GET'])
+def fetch_plans():
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    
+    query = "SELECT id, shift, partna, partno, target_qty, plan_qty, status FROM planning"
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    print("rows are:", rows)
+    cursor.close()
+    connection.close()
+    
+    return rows  # Return only rows fetched from the database
+def get_planning():
+    plans = fetch_plans()
+    return jsonify(plans)
+
+
+
+
+@app.route('/<path:filename>')
+def serve_media(filename):
+    if filename in ['ads logo.png', 'favicon.ico', 'logo.png']:
+        # Serve static files directly from the UPLOAD_FOLDER
+        return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+    else:
+        # Handle other endpoints using the database
+        with connection2.cursor() as cursor:
+            # Fetch filename and media_type from the database based on the endpoint
+            sql = "SELECT filename, media_type FROM All_Departments WHERE endpoint = %s"
+            cursor.execute(sql, (filename,))
+            result = cursor.fetchone()
+            if result:
+                filename = result['filename']
+                media_type = result['media_type']
+                print("Debug: Filename:", filename)
+                print("Debug: Media Type:", media_type)
+                file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                if media_type == 'photo':
+                    return render_template('media4.html', filename=filename, media_type='photo')
+                elif media_type == 'video':
+                    return render_template('media4.html', filename=filename, media_type='video')
+                else:
+                    return "Endpoint not found", 404
+
+def update_mysql_table(endpoints, filenames, media_types):
+    try:
+        with connection2.cursor() as cursor:
+            for endpoint, filename, media_type in zip(endpoints, filenames, media_types):
+                # Truncate media_type if it exceeds the maximum length allowed in the database
+                max_length = 100  # Replace 50 with the maximum length allowed for media_type in your database
+                truncated_media_type = media_type[:max_length]
+
+                # Assuming you have a table named 'media' with columns 'endpoint', 'filename', and 'media_type'
+                sql = "UPDATE All_Departments SET filename = %s, media_type = %s WHERE endpoint = %s"
+                cursor.execute(sql, (filename, truncated_media_type, endpoint))
+                print("Updated details - Endpoint: {}, Filename: {}, Media Type: {}".format(endpoint, filename, truncated_media_type))
+            print("SQL query executed successfully.")
+        # Commit changes to the database
+        connection2.commit()
+        print("Changes committed to the database.")
+    except Exception as e:
+        # Handle any errors that might occur during the database operation
+        print("Error updating MySQL table:", e)
+25
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        try:
+            # Get username and password from the form
+            username = request.form['username']
+            password = request.form['password']
+
+            # Check if username and password match a record in the database
+            with connection2.cursor() as cursor:
+                sql = "SELECT * FROM login WHERE username = %s AND password = %s"
+                cursor.execute(sql, (username, password))
+                result = cursor.fetchone()
+                if result:
+                    # Store the authentication status in the session
+                    session['username'] = username
+                    session['department'] = result['department']
+                    session['logged_in'] = True  # Add this line to set logged_in status
+                    user_agent = request.headers.get('User-Agent')
+                    ua = user_agents.parse(user_agent)
+                    is_mobile = ua.is_mobile
+                    return render_template('index.html', is_mobile=is_mobile)
+                else:
+                    return render_template('login.html', message='Invalid credentials')  # Render an error message if authentication fails
+        except pymysql.Error as e:
+            # Handle MySQL errors
+            print("MySQL Error:", e)
+            return "An error occurred. Please try again later.", 500
+
+    return render_template('login.html')
+
+
+
+@app.route('/')
+def index():
+    if 'user' in session:
+        return redirect(url_for('index'))
+    else:
+        return redirect(url_for('login'))
+
+# Route for Digital SOP
+@app.route('/digital_sop')
+def digital_sop():
+    if session['department'] == 'Admin':
+        return render_template('index5.html')
+    elif session['department'] == 'Extrusion':
+        return render_template('extrusion.html')
+    elif session['department'] == 'Assembly':
+        return render_template('assembly.html')
+    elif session['department'] == 'Tool Room':
+        return render_template('tool_room.html')
+
+@app.route('/assy')
+def assy():
+    try:
+        return send_from_directory('Z:/Digitalization/HTML','ASSEMBLY.html')
+    except FileNotFoundError:
+        return "Assembly file not found.", 404
+    
+@app.route('/add_data', methods=['POST'])
+def add_data():
+    if request.method == 'POST':
+        model = request.form['model']
+        partna = request.form['partna']
+        partno = request.form['partno']
+        plan = int(request.form['plan'])
+        target = int(request.form['target'])
+        operator = request.form['operator']
+        supervisor = request.form['supervisor']
+        date = request.form['date']
+        time = request.form['time']
+        shift = request.form['shift']
+        status = request.form['status']
+
+        # Fetch cycle_time from target_sheet table
+        cur = mysql.connection.cursor()
+        cur.execute("SELECT cycle_time FROM target_sheet WHERE partna = %s AND model = %s", (partna, model))
+        cycle_time_row = cur.fetchone()
+        if cycle_time_row:
+            cycle_time = cycle_time_row[0]
+        else:
+            # Handle case where cycle_time is not found
+            cycle_time = 0
+        cur.close()
+
+        # Calculate schedule_time
+        schedule_time = target * cycle_time/60
+
+        # Insert the data into the database
+        cur = mysql.connection.cursor()
+        cur.execute("INSERT INTO planning (date, time, shift, model, partna, partno, target_qty, plan_qty, operator_name, supervisor_name, status, schedule_time) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", (date, time, shift, model, partna, partno, target, plan, operator, supervisor, status, schedule_time))
+        mysql.connection.commit()
+        cur.close()
+
+        success_message = "Form Submission Successful"
+        return render_template_string(success_message)
+
+@app.route('/running_plans')
+def running_plans():
+    # Retrieve today's date
+    today_date = datetime.now().strftime("%Y-%m-%d")
+
+    # Fetch today's plans from the database
+    cur = mysql.connection.cursor()
+    cur.execute("SELECT * FROM planning WHERE date = %s", (today_date,))
+    plans = cur.fetchall()
+    cur.close()
+    
+    # Render the template with today's plans
+    return render_template('running_plans.html', plans=plans)
+
+@app.route('/update_plans', methods=['GET', 'POST'])
+def update_plans():
+    if request.method == 'POST':
+        # Retrieve plan details based on plan_id and update them in the database
+        # Update the plan data
+        plan_id = request.form['plan_id']
+        # Retrieve plan data from the database based on the plan_id
+        cur = mysql.connection.cursor()
+        cur.execute("SELECT * FROM planning WHERE id = %s", (plan_id,))
+        plan = cur.fetchone()
+        cur.close()
+        return render_template('modify_plan.html', plan=plan)
+    else:
+        return render_template('update_plans.html')
+
+@app.route('/update_plan', methods=['POST'])
+def update_plan():
+    if request.method == 'POST':
+        # Get the form data
+        plan_id = request.form['plan_id']
+        model = request.form['model']
+        partna = request.form['partna']
+        partno = request.form['partno']
+        plan = request.form['plan']
+        target = request.form['target']
+        operator = request.form['operator']
+        supervisor = request.form['supervisor']
+        date = request.form['date']
+        time = request.form['time']
+        shift = request.form['shift']
+        status = request.form['status']
+
+        # Update the plan in the database
+        cur = mysql.connection.cursor()
+        cur.execute("UPDATE planning SET date=%s, time=%s, shift=%s, model=%s, partna=%s, partno=%s, target_qty=%s, plan_qty=%s, operator_name=%s, supervisor_name=%s, status=%s WHERE id=%s", (date, time, shift, model, partna, partno, target, plan, operator, supervisor, status, plan_id))
+        mysql.connection.commit()
+        cur.close()
+        # Redirect to the running_plans endpoint after updating
+        return 'Data updated successfully'
+
+
+# Logout route
+@app.route('/logout')
+def logout():
+    # Clear the logged_in session variable upon logout
+    session.pop('logged_in', None)
+    return redirect(url_for('login'))  # Redirect to login route after logout
+
+@app.route('/dashboard')
+def show_dashboard():
+    return render_template('dashboard.html')
+
+@app.route('/update', methods=['POST'])
+def update_files():
+    try:
+        files = request.files.getlist('file[]')
+        endpoints = request.form.getlist('endpoint[]')
+        media_types = request.form.getlist('media_type[]')
+
+        print("Received files:", files)
+        print("Endpoints:", endpoints)
+        print("Media Types:", media_types)
+
+        if files and endpoints and media_types:
+            # Extract filenames from the FileStorage objects
+            filenames = [file.filename for file in files]
+
+            # Save the uploaded files to the UPLOAD_FOLDER
+            for file in files:
+                filename = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
+                file.save(filename)
+
+            # Update the MySQL table with the new filenames and media types
+            update_mysql_table(endpoints, filenames, media_types)
+
+            return 'Files uploaded successfully and database updated!', 200
+        else:
+            return 'Invalid request data!', 400
+    except Exception as e:
+        # Handle other exceptions
+        print("Error:", e)
+        return "An error occurred. Please try again later.", 500
+
+@app.route('/api/create_user', methods=['POST'])
+def create_user():
+    data = request.get_json()
+    name = data.get('name')
+    emp_id = data.get('empId')
+    department = data.get('department')
+    access = data.get('access')
+
+    # Insert the data into the database
+    cur = mysql.connection.cursor()
+    cur.execute("INSERT INTO users (name, emp_id, department, access) VALUES (%s, %s, %s, %s)", 
+                (name, emp_id, department, access))
+    mysql.connection.commit()
+    cur.close()
+
+    return jsonify({"message": "User created successfully"}), 201
+
+# Endpoint to fetch data
+@app.route('/api/barchart1', methods=['GET'])
+def get_data():
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    
+    query = """
+    SELECT Main_Die_Set, Main_Die_Actual, Main_Puller_Actual, Main_Puller_Set, 
+           Cutting_Machine_Actual, Cutting_Machine_Set, Mini_Puller_Actual, 
+           Mini_Puller_Set, Cooling_Trough_Actual 
+    FROM common
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+
+    cursor.close()
+    connection.close()
+
+    return jsonify(rows)
+
+@app.route('/api/ext1', methods=['GET'])
+def get_data_ext1():
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    
+    query = """
+    SELECT  BZ1_Set, BZ1_Actual, BZ2_Set, BZ2_Actual,BZ3_Set, BZ3_Actual,BZ4_Set, BZ4_Actual,
+            DZ1_Set, DZ1_Actual,DZ2_Set, DZ2_Actual, DZ3_Set, DZ3_Actual
+    FROM L8Ext1
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+
+    cursor.close()
+    connection.close()
+
+    return jsonify(rows)
+
+@app.route('/api/ext2', methods=['GET'])
+def get_data_ext2():
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    
+    query = """
+    SELECT  BZ1_Set, BZ1_Actual, BZ2_Set, BZ2_Actual,BZ3_Set, BZ3_Actual,BZ4_Set, BZ4_Actual,
+            DZ1_Set, DZ1_Actual,DZ2_Set, DZ2_Actual, DZ3_Set, DZ3_Actual
+    FROM L8Ext2
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    cursor.close()
+    connection.close()
+
+    return jsonify(rows)
+@app.route('/api/ext3', methods=['GET'])
+def get_data_ext3():
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    
+    query = """
+    SELECT  BZ1_Set, BZ1_Actual, BZ2_Set, BZ2_Actual,BZ3_Set, BZ3_Actual,BZ4_Set, BZ4_Actual,
+            DZ1_Set, DZ1_Actual,DZ2_Set, DZ2_Actual
+    FROM L8Ext3
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+
+    cursor.close()
+    connection.close()
+
+    return jsonify(rows)
+@app.route('/api/ext4', methods=['GET'])
+def get_data_ext4():
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    
+    query = """
+    SELECT  BZ1_Set, BZ1_Actual, BZ2_Set, BZ2_Actual,BZ3_Set, BZ3_Actual,BZ4_Set, BZ4_Actual,
+            DZ1_Set, DZ1_Actual,DZ2_Set, DZ2_Actual, DZ3_Set, DZ3_Actual
+    FROM L8Ext4
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+
+    cursor.close()
+    connection.close()
+
+    return jsonify(rows)
+
+@app.route('/api/partname', methods=['GET'])
+def get_partname():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    query = """
+    SELECT part_name FROM L8_Running_Status
+    ORDER BY `s.no` DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    print("rows are:", rows)
+    cursor.close()
+    conn.close()
+    return rows  # Return only rows fetched from the database
+def get_PART():
+    data2 = get_partname()
+    return jsonify(data2)
+
+@app.route('/api/model', methods=['GET'])
+def get_model():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    query = """
+    SELECT model FROM L8_Running_Status
+    ORDER BY `s.no` DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    print("rows are:", rows)
+    cursor.close()
+    conn.close()
+    return rows  # Return only rows fetched from the database
+def get_MOD():
+    data2 = get_model()
+    return jsonify(data2)
+
+@app.route('/api/linespeed', methods=['GET'])
+def get_linespeed():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    query = """
+    SELECT line_speed FROM L8_Running_Status
+    ORDER BY `s.no` DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    print("rows are:", rows)
+    cursor.close()
+    conn.close()
+    return rows  # Return only rows fetched from the database
+def get_LS():
+    data2 = get_linespeed()
+    return jsonify(data2)
+
+@app.route('/api/factor', methods=['GET'])
+def get_factor_data():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    query = """
+    SELECT Factor FROM common
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    print("rows are:", rows)
+    cursor.close()
+    conn.close()
+    return rows  # Return only rows fetched from the database
+def get_factor():
+    rows = get_factor_data()
+    return jsonify(rows)
+
+@app.route('/api/common', methods=['GET'])
+def get_common_data():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # Fetch common values from all tables
+    query = """
+    SELECT Main_Motor_Set, Main_Motor_Actual, `Load` FROM L8Ext1
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    data1 = cursor.fetchall()
+
+    query2 = """
+    SELECT Main_Motor_Set, Main_Motor_Actual, `Load` FROM L8Ext1
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query2)
+    data2 = cursor.fetchall()
+
+    query3 = """
+    SELECT Main_Motor_Set, Main_Motor_Actual, `Load` FROM L8Ext3
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query3)
+    data3 = cursor.fetchall()
+
+    query4 = """
+    SELECT Main_Motor_Set, Main_Motor_Actual, `Load` FROM L8Ext4
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query4)
+    data4 = cursor.fetchall()
+    
+    cursor.close()
+    conn.close()
+    # Combine data into a single JSON format
+    data = {
+        "L8Ext1": data1[0] if data1 else None,
+        "L8Ext2": data2[0] if data2 else None,
+        "L8Ext3": data3[0] if data3 else None,
+        "L8Ext4": data4[0] if data4 else None
+    }
+    return jsonify(data)
+
+def get_active_planning_id():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM planning WHERE status = 'active'")
+    result = cursor.fetchone()
+    conn.close()
+    return result['id'] if result else None
+
+def get_gap_values(id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    query = """
+    SELECT 
+        'L8Ext1', BZ1_Gap, BZ2_Gap, BZ3_Gap, BZ4_Gap, DZ1_Gap, DZ2_Gap, DZ3_Gap
+    FROM 
+        L8Ext1
+    WHERE 
+        id = %s AND (BZ1_Gap > 10 OR BZ2_Gap > 10 OR BZ3_Gap > 10 OR BZ4_Gap > 10 OR DZ1_Gap > 10 OR DZ2_Gap > 10 OR DZ3_Gap > 10)
+    UNION ALL
+    SELECT 
+        'L8Ext2', BZ1_Gap, BZ2_Gap, BZ3_Gap, BZ4_Gap, DZ1_Gap, DZ2_Gap, DZ3_Gap
+    FROM 
+        L8Ext2
+    WHERE 
+        id = %s AND (BZ1_Gap > 10 OR BZ2_Gap > 10 OR BZ3_Gap > 10 OR BZ4_Gap > 10 OR DZ1_Gap > 10 OR DZ2_Gap > 10 OR DZ3_Gap > 10)
+    UNION ALL
+    SELECT 
+        'L8Ext4', BZ1_Gap, BZ2_Gap, BZ3_Gap, BZ4_Gap, DZ1_Gap, DZ2_Gap, DZ3_Gap
+    FROM 
+        L8Ext4
+    WHERE 
+        id = %s AND (BZ1_Gap > 10 OR BZ2_Gap > 10 OR BZ3_Gap > 10 OR BZ4_Gap > 10 OR DZ1_Gap > 10 OR DZ2_Gap > 10 OR DZ3_Gap > 10)
+    """
+
+    cursor.execute(query, (id, id, id))
+    results = cursor.fetchall()
+    conn.close()
+    print(results)
+    return results
+
+@app.route('/api/gap_values', methods=['GET'])
+def gap_values():
+    planning_id = get_active_planning_id()
+    if not planning_id:
+        return jsonify({'error': 'No active planning found'}), 404
+
+    gap_values = get_gap_values(planning_id)
+    return jsonify(gap_values)
+
+@app.route('/test', methods=['GET'])
+def test():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    query1 = """
+    SELECT BZ1_NC, BZ2_NC, BZ3_NC, BZ4_NC, DZ1_NC, DZ2_NC, DZ3_NC 
+    FROM L8Ext1 ORDER BY s_no DESC LIMIT 1
+    """
+    cursor.execute(query1)
+    data1 = cursor.fetchall()
+
+    query2 = """
+    SELECT BZ1_NC, BZ2_NC, BZ3_NC, BZ4_NC, DZ1_NC, DZ2_NC, DZ3_NC 
+    FROM L8Ext2 ORDER BY s_no DESC LIMIT 1
+    """
+    cursor.execute(query2)
+    data2 = cursor.fetchall()
+
+    query3 = """
+    SELECT BZ1_NC, BZ2_NC, BZ3_NC, BZ4_NC, DZ1_NC, DZ2_NC 
+    FROM L8Ext3 ORDER BY s_no DESC LIMIT 1
+    """
+    cursor.execute(query3)
+    data3 = cursor.fetchall()
+
+    query4 = """
+    SELECT BZ1_NC, BZ2_NC, BZ3_NC, BZ4_NC, DZ1_NC, DZ2_NC, DZ3_NC 
+    FROM L8Ext4 ORDER BY s_no DESC LIMIT 1
+    """
+    cursor.execute(query4)
+    data4 = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+
+    # Combine data into a single JSON format
+    data = {
+        "L8Ext1": data1[0] if data1 else None,
+        "L8Ext2": data2[0] if data2 else None,
+        "L8Ext3": data3[0] if data3 else None,
+        "L8Ext4": data4[0] if data4 else None
+    }
+
+    return jsonify(data)
+
+
+if __name__ == '__main__':
+    app.secret_key = 'AnkitHarshAmit@123'
+    app.run(host='0.0.0.0', port=5000, debug=False)

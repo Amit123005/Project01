@@ -1,0 +1,1254 @@
+import os
+import pymysql.cursors
+import mysql.connector
+import user_agents
+from flask import Flask, request, render_template, redirect, url_for, session, send_from_directory, render_template_string, jsonify, make_response
+from flask import current_app
+from flask_mysqldb import MySQL
+from datetime import datetime
+from flask_cors import CORS
+from msal import ConfidentialClientApplication
+import requests
+import threading
+import time
+
+app = Flask(__name__)
+CORS(app)
+# MySQL Configuration
+app.config['MYSQL_HOST'] = 'localhost'
+app.config['MYSQL_USER'] = 'root'
+app.config['MYSQL_PASSWORD'] = 'Harsh@123'
+app.config['MYSQL_DB'] = 'Line8'
+
+mysql = MySQL(app)
+
+# Define the directory to store uploaded files
+UPLOAD_FOLDER = 'D:/Projects/Operator मित्र/static'
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+# MySQL Configuration for the second script
+connection = pymysql.connect(
+    host='localhost',
+    user='root',
+    password='Harsh@123',
+    database='line8',
+    cursorclass=pymysql.cursors.DictCursor
+)
+
+def get_db_connection():
+    return pymysql.connect(
+        host='localhost',
+        user='root',
+        password='Harsh@123',
+        database='line8',
+        cursorclass=pymysql.cursors.DictCursor
+    )
+
+connection2 = pymysql.connect(
+    host='localhost',
+    user='root',
+    password='Harsh@123',
+    database='digital_signage',
+    cursorclass=pymysql.cursors.DictCursor
+)
+
+def get_db_connection2():
+    return pymysql.connect(
+        host='localhost',
+        user='root',
+        password='Harsh@123',
+        database='digital_signage',
+        cursorclass=pymysql.cursors.DictCursor
+    )
+
+# Define the structure of departments, lines, cells, and endpoints
+departments = {
+    'Extrusion': {
+        'lines': {
+            'Line 1': ['Uncoiling', 'Looping', 'Taping', 'Roll Forming', 'Induction', 'Co-Extrusion', 'Cooling Trough', 'Main Puller', 'Laser Print', 'Mini Puller', 'Rough Cut'],
+            'Line 2': ['Uncoiling', 'Looping', 'Taping', 'Roll Forming', 'Induction', 'Co-Extrusion', 'Cooling Trough', 'Main Puller', 'Laser Print', 'Plasma', 'Mini Puller', 'Rough Cut'],
+            'Line 3': ['Uncoiling', 'Looping', 'Taping', 'Roll Forming', 'Induction', 'Co-Extrusion', 'Cooling Trough', 'Main Puller', 'Laser Print', 'Mini Puller', 'Rough Cut'],
+            'Line 4': ['Co-Extrusion', 'Cooling Trough', 'Main Puller', 'Laser Print', 'Plasma', 'Mini Puller', 'Rough Cut'],
+            'Line 5': ['Uncoiling', 'Looping', 'Induction', 'Co-Extrusion', 'Cooling Trough', 'Main Puller', 'Laser Print', 'Mini Puller', 'Rough Cut'],
+            'Line 6': ['Uncoiling', 'Looping', 'Induction', 'Co-Extrusion', 'Cooling Trough', 'Main Puller', 'Laser Print', 'Mini Puller', 'Rough Cut'],
+            'Line 8': ['Uncoiling', 'Looping', 'Induction', 'Co-Extrusion', 'Cooling Trough', 'Main Puller', 'Laser Print', 'Mini Puller', 'Rough Cut']
+        }
+    },
+    'Assembly': {
+        'cells': {
+            'Cell 21': ['Notching A', 'Notching B', 'Endcap A','Endcap B', 'CTS_SB', 'Inspection_Packing A','Inspection_Packing B', 'USW'],
+            'Cell 22': ['Notching A', 'Notching B', 'Endcap A','Endcap B', 'CTS_SB', 'Inspection_Packing A','Inspection_Packing B', 'USW']
+        }
+    },
+    'Tool Room': {
+        'section':{
+                'Conventional':      ['Band Saw', 'Milling - 1', 'Milling - 2', 'Milling - 3', 'Milling - 4', 'Surface Grinder - 1', 'Surface Grinder - 2', 'Cylindrical Grinder', 'Lathe Machine - 1', 'Lathe Machine - 2'],
+                'CNC':               ['CNC Lathe', 'EDM Drilling', 'CNC Wirecut - 1', 'CNC Wirecut - 2', 'CNC Milling - 1', 'CNC Milling - 2', 'CNC EDM-1', 'CNC EDM-2', 'Laser Marking'],
+                'Quality Control':   ['CMM', 'Hardness Tester', 'Digimicro Set'],
+                'Assembly':          ['Die Spotting', 'Tapping', 'Chamfering', 'Bench Grinder', 'Muffle Furnace']
+            }
+    }
+
+}
+
+
+
+@app.route('/api/planning', methods=['GET'])
+def fetch_plans():
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    
+    query = "SELECT id, shift, partna, partno, target_qty, plan_qty, status FROM planning"
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    print("rows are:", rows)
+    cursor.close()
+    connection.close()
+    
+    return rows  # Return only rows fetched from the database
+def get_planning():
+    plans = fetch_plans()
+    return jsonify(plans)
+
+
+
+
+@app.route('/<path:filename>')
+def serve_media(filename):
+    if filename in ['ads logo.png', 'favicon.ico', 'logo.png']:
+        # Serve static files directly from the UPLOAD_FOLDER
+        return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+    else:
+        # Handle other endpoints using the database
+        with connection2.cursor() as cursor:
+            # Fetch filename and media_type from the database based on the endpoint
+            sql = "SELECT filename, media_type FROM All_Departments WHERE endpoint = %s"
+            cursor.execute(sql, (filename,))
+            result = cursor.fetchone()
+            if result:
+                filename = result['filename']
+                media_type = result['media_type']
+                print("Debug: Filename:", filename)
+                print("Debug: Media Type:", media_type)
+                file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                if media_type == 'photo':
+                    return render_template('media4.html', filename=filename, media_type='photo')
+                elif media_type == 'video':
+                    return render_template('media4.html', filename=filename, media_type='video')
+                else:
+                    return "Endpoint not found", 404
+
+def update_mysql_table(endpoints, filenames, media_types):
+    try:
+        with connection2.cursor() as cursor:
+            for endpoint, filename, media_type in zip(endpoints, filenames, media_types):
+                # Truncate media_type if it exceeds the maximum length allowed in the database
+                max_length = 100  # Replace 50 with the maximum length allowed for media_type in your database
+                truncated_media_type = media_type[:max_length]
+
+                # Assuming you have a table named 'media' with columns 'endpoint', 'filename', and 'media_type'
+                sql = "UPDATE All_Departments SET filename = %s, media_type = %s WHERE endpoint = %s"
+                cursor.execute(sql, (filename, truncated_media_type, endpoint))
+                print("Updated details - Endpoint: {}, Filename: {}, Media Type: {}".format(endpoint, filename, truncated_media_type))
+            print("SQL query executed successfully.")
+        # Commit changes to the database
+        connection2.commit()
+        print("Changes committed to the database.")
+    except Exception as e:
+        # Handle any errors that might occur during the database operation
+        print("Error updating MySQL table:", e)
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        try:
+            # Get username and password from the form
+            username = request.form['username']
+            password = request.form['password']
+
+            # Check if username and password match a record in the database
+            with connection2.cursor() as cursor:
+                sql = "SELECT * FROM login WHERE username = %s AND password = %s"
+                cursor.execute(sql, (username, password))
+                result = cursor.fetchone()
+                if result:
+                    # Store the authentication status in the session
+                    session['username'] = username
+                    session['department'] = result['department']
+                    session['logged_in'] = True  # Add this line to set logged_in status
+                    user_agent = request.headers.get('User-Agent')
+                    ua = user_agents.parse(user_agent)
+                    is_mobile = ua.is_mobile
+                    return render_template('index.html', is_mobile=is_mobile)
+                else:
+                    return render_template('login.html', message='Invalid credentials')  # Render an error message if authentication fails
+        except pymysql.Error as e:
+            # Handle MySQL errors
+            print("MySQL Error:", e)
+            return "An error occurred. Please try again later.", 500
+
+    return render_template('login.html')
+
+
+
+@app.route('/')
+def index():
+    if 'user' in session:
+        return redirect(url_for('index'))
+    else:
+        return redirect(url_for('login'))
+
+# Route for Digital SOP
+@app.route('/digital_sop')
+def digital_sop():
+    if session['department'] == 'Admin':
+        return render_template('index5.html')
+    elif session['department'] == 'Extrusion':
+        return render_template('extrusion.html')
+    elif session['department'] == 'Assembly':
+        return render_template('assembly.html')
+    elif session['department'] == 'Tool Room':
+        return render_template('tool_room.html')
+
+@app.route('/assy')
+def assy():
+    try:
+        return send_from_directory('Z:/Digitalization/HTML','ASSEMBLY.html')
+    except FileNotFoundError:
+        return "Assembly file not found.", 404
+    
+@app.route('/add_data', methods=['POST'])
+def add_data():
+    if request.method == 'POST':
+        model = request.form['model']
+        partna = request.form['partna']
+        partno = request.form['partno']
+        plan = int(request.form['plan'])
+        target = int(request.form['target'])
+        operator = request.form['operator']
+        supervisor = request.form['supervisor']
+        date = request.form['date']
+        time = request.form['time']
+        shift = request.form['shift']
+        status = request.form['status']
+
+        # Fetch cycle_time from target_sheet table
+        cur = mysql.connection.cursor()
+        cur.execute("SELECT cycle_time FROM target_sheet WHERE partna = %s AND model = %s", (partna, model))
+        cycle_time_row = cur.fetchone()
+        if cycle_time_row:
+            cycle_time = cycle_time_row[0]
+        else:
+            # Handle case where cycle_time is not found
+            cycle_time = 0
+        cur.close()
+
+        # Calculate schedule_time
+        schedule_time = target * cycle_time/60
+
+        # Insert the data into the database
+        cur = mysql.connection.cursor()
+        cur.execute("INSERT INTO planning (date, time, shift, model, partna, partno, target_qty, plan_qty, operator_name, supervisor_name, status, schedule_time) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", (date, time, shift, model, partna, partno, target, plan, operator, supervisor, status, schedule_time))
+        mysql.connection.commit()
+        cur.close()
+
+        success_message = "Form Submission Successful"
+        return render_template_string(success_message)
+
+@app.route('/running_plans')
+def running_plans():
+    # Retrieve today's date
+    today_date = datetime.now().strftime("%Y-%m-%d")
+
+    # Fetch today's plans from the database
+    cur = mysql.connection.cursor()
+    cur.execute("SELECT * FROM planning WHERE date = %s", (today_date,))
+    plans = cur.fetchall()
+    cur.close()
+    
+    # Render the template with today's plans
+    return render_template('running_plans.html', plans=plans)
+
+@app.route('/update_plans', methods=['GET', 'POST'])
+def update_plans():
+    if request.method == 'POST':
+        # Retrieve plan details based on plan_id and update them in the database
+        # Update the plan data
+        plan_id = request.form['plan_id']
+        # Retrieve plan data from the database based on the plan_id
+        cur = mysql.connection.cursor()
+        cur.execute("SELECT * FROM planning WHERE id = %s", (plan_id,))
+        plan = cur.fetchone()
+        cur.close()
+        return render_template('modify_plan.html', plan=plan)
+    else:
+        return render_template('update_plans.html')
+
+@app.route('/update_plan', methods=['POST'])
+def update_plan():
+    if request.method == 'POST':
+        # Get the form data
+        plan_id = request.form['plan_id']
+        model = request.form['model']
+        partna = request.form['partna']
+        partno = request.form['partno']
+        plan = request.form['plan']
+        target = request.form['target']
+        operator = request.form['operator']
+        supervisor = request.form['supervisor']
+        date = request.form['date']
+        time = request.form['time']
+        shift = request.form['shift']
+        status = request.form['status']
+
+        # Update the plan in the database
+        cur = mysql.connection.cursor()
+        cur.execute("UPDATE planning SET date=%s, time=%s, shift=%s, model=%s, partna=%s, partno=%s, target_qty=%s, plan_qty=%s, operator_name=%s, supervisor_name=%s, status=%s WHERE id=%s", (date, time, shift, model, partna, partno, target, plan, operator, supervisor, status, plan_id))
+        mysql.connection.commit()
+        cur.close()
+        # Redirect to the running_plans endpoint after updating
+        return 'Data updated successfully'
+
+
+# Logout route
+@app.route('/logout')
+def logout():
+    # Clear the logged_in session variable upon logout
+    session.pop('logged_in', None)
+    return redirect(url_for('login'))  # Redirect to login route after logout
+
+@app.route('/dashboard')
+def show_dashboard():
+    return render_template('dashboard.html')
+
+@app.route('/update', methods=['POST'])
+def update_files():
+    try:
+        files = request.files.getlist('file[]')
+        endpoints = request.form.getlist('endpoint[]')
+        media_types = request.form.getlist('media_type[]')
+
+        print("Received files:", files)
+        print("Endpoints:", endpoints)
+        print("Media Types:", media_types)
+
+        if files and endpoints and media_types:
+            # Extract filenames from the FileStorage objects
+            filenames = [file.filename for file in files]
+
+            # Save the uploaded files to the UPLOAD_FOLDER
+            for file in files:
+                filename = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
+                file.save(filename)
+
+            # Update the MySQL table with the new filenames and media types
+            update_mysql_table(endpoints, filenames, media_types)
+
+            return 'Files uploaded successfully and database updated!', 200
+        else:
+            return 'Invalid request data!', 400
+    except Exception as e:
+        # Handle other exceptions
+        print("Error:", e)
+        return "An error occurred. Please try again later.", 500
+
+@app.route('/api/create_user', methods=['POST'])
+def create_user():
+    data = request.get_json()
+    name = data.get('name')
+    emp_id = data.get('empId')
+    department = data.get('department')
+    access = data.get('access')
+
+    # Insert the data into the database
+    cur = mysql.connection.cursor()
+    cur.execute("INSERT INTO users (name, emp_id, department, access) VALUES (%s, %s, %s, %s)", 
+                (name, emp_id, department, access))
+    mysql.connection.commit()
+    cur.close()
+
+    return jsonify({"message": "User created successfully"}), 201
+
+# Endpoint to fetch data
+@app.route('/api/barchart1', methods=['GET'])
+def get_data():
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    
+    query = """
+    SELECT Main_Die_Set, Main_Die_Actual, Main_Puller_Actual, Main_Puller_Set, 
+           Cutting_Machine_Actual, Cutting_Machine_Set, Mini_Puller_Actual, 
+           Mini_Puller_Set, Cooling_Trough_Actual 
+    FROM common
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+
+    cursor.close()
+    connection.close()
+
+    return jsonify(rows)
+
+@app.route('/api/ext1', methods=['GET'])
+def get_data_ext1():
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    
+    query = """
+    SELECT  BZ1_Set, BZ1_Actual, BZ2_Set, BZ2_Actual,BZ3_Set, BZ3_Actual,BZ4_Set, BZ4_Actual,
+            DZ1_Set, DZ1_Actual,DZ2_Set, DZ2_Actual, DZ3_Set, DZ3_Actual
+    FROM L8Ext1
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+
+    cursor.close()
+    connection.close()
+
+    return jsonify(rows)
+
+@app.route('/api/ext2', methods=['GET'])
+def get_data_ext2():
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    
+    query = """
+    SELECT  BZ1_Set, BZ1_Actual, BZ2_Set, BZ2_Actual,BZ3_Set, BZ3_Actual,BZ4_Set, BZ4_Actual,
+            DZ1_Set, DZ1_Actual,DZ2_Set, DZ2_Actual, DZ3_Set, DZ3_Actual
+    FROM L8Ext2
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    cursor.close()
+    connection.close()
+
+    return jsonify(rows)
+@app.route('/api/ext3', methods=['GET'])
+def get_data_ext3():
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    
+    query = """
+    SELECT  BZ1_Set, BZ1_Actual, BZ2_Set, BZ2_Actual,BZ3_Set, BZ3_Actual,BZ4_Set, BZ4_Actual,
+            DZ1_Set, DZ1_Actual,DZ2_Set, DZ2_Actual
+    FROM L8Ext3
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+
+    cursor.close()
+    connection.close()
+
+    return jsonify(rows)
+@app.route('/api/ext4', methods=['GET'])
+def get_data_ext4():
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    
+    query = """
+    SELECT  BZ1_Set, BZ1_Actual, BZ2_Set, BZ2_Actual,BZ3_Set, BZ3_Actual,BZ4_Set, BZ4_Actual,
+            DZ1_Set, DZ1_Actual,DZ2_Set, DZ2_Actual, DZ3_Set, DZ3_Actual
+    FROM L8Ext4
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+
+    cursor.close()
+    connection.close()
+
+    return jsonify(rows)
+
+@app.route('/api/partname', methods=['GET'])
+def get_partname():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    query = """
+    SELECT part_name FROM L8_Running_Status
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    print("rows are:", rows)
+    cursor.close()
+    conn.close()
+    return rows  # Return only rows fetched from the database
+def get_PART():
+    data2 = get_partname()
+    return jsonify(data2)
+
+@app.route('/api/model', methods=['GET'])
+def get_model():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    query = """
+    SELECT model FROM L8_Running_Status
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    print("rows are:", rows)
+    cursor.close()
+    conn.close()
+    return rows  # Return only rows fetched from the database
+def get_MOD():
+    data2 = get_model()
+    return jsonify(data2)
+
+@app.route('/api/linespeed', methods=['GET'])
+def get_linespeed():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    query = """
+    SELECT line_speed FROM L8_Running_Status
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    print("rows are:", rows)
+    cursor.close()
+    conn.close()
+    return rows  # Return only rows fetched from the database
+def get_LS():
+    data2 = get_linespeed()
+    return jsonify(data2)
+
+@app.route('/api/factor', methods=['GET'])
+def get_factor_data():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    query = """
+    SELECT Factor FROM common
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    print("rows are:", rows)
+    cursor.close()
+    conn.close()
+    return rows  # Return only rows fetched from the database
+def get_factor():
+    rows = get_factor_data()
+    return jsonify(rows)
+
+@app.route('/api/common', methods=['GET'])
+def get_common_data():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # Fetch common values from all tables
+    query = """
+    SELECT Main_Motor_Set, Main_Motor_Actual, `Load` FROM L8Ext1
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    data1 = cursor.fetchall()
+
+    query2 = """
+    SELECT Main_Motor_Set, Main_Motor_Actual, `Load` FROM L8Ext1
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query2)
+    data2 = cursor.fetchall()
+
+    query3 = """
+    SELECT Main_Motor_Set, Main_Motor_Actual, `Load` FROM L8Ext3
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query3)
+    data3 = cursor.fetchall()
+
+    query4 = """
+    SELECT Main_Motor_Set, Main_Motor_Actual, `Load` FROM L8Ext4
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query4)
+    data4 = cursor.fetchall()
+    
+    cursor.close()
+    conn.close()
+    # Combine data into a single JSON format
+    data = {
+        "L8Ext1": data1[0] if data1 else None,
+        "L8Ext2": data2[0] if data2 else None,
+        "L8Ext3": data3[0] if data3 else None,
+        "L8Ext4": data4[0] if data4 else None
+    }
+    return jsonify(data)
+
+def get_active_planning_id():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM planning WHERE status = 'active'")
+    result = cursor.fetchone()
+    conn.close()
+    return result['id'] if result else None
+
+def get_gap_values(id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    query = """
+    SELECT 
+        'L8Ext1', BZ1_Gap, BZ2_Gap, BZ3_Gap, BZ4_Gap, DZ1_Gap, DZ2_Gap, DZ3_Gap
+    FROM 
+        L8Ext1
+    WHERE 
+        id = %s AND (BZ1_Gap > 10 OR BZ2_Gap > 10 OR BZ3_Gap > 10 OR BZ4_Gap > 10 OR DZ1_Gap > 10 OR DZ2_Gap > 10 OR DZ3_Gap > 10)
+    UNION ALL
+    SELECT 
+        'L8Ext2', BZ1_Gap, BZ2_Gap, BZ3_Gap, BZ4_Gap, DZ1_Gap, DZ2_Gap, DZ3_Gap
+    FROM 
+        L8Ext2
+    WHERE 
+        id = %s AND (BZ1_Gap > 10 OR BZ2_Gap > 10 OR BZ3_Gap > 10 OR BZ4_Gap > 10 OR DZ1_Gap > 10 OR DZ2_Gap > 10 OR DZ3_Gap > 10)
+    UNION ALL
+    SELECT 
+        'L8Ext4', BZ1_Gap, BZ2_Gap, BZ3_Gap, BZ4_Gap, DZ1_Gap, DZ2_Gap, DZ3_Gap
+    FROM 
+        L8Ext4
+    WHERE 
+        id = %s AND (BZ1_Gap > 10 OR BZ2_Gap > 10 OR BZ3_Gap > 10 OR BZ4_Gap > 10 OR DZ1_Gap > 10 OR DZ2_Gap > 10 OR DZ3_Gap > 10)
+    """
+
+    cursor.execute(query, (id, id, id))
+    results = cursor.fetchall()
+    conn.close()
+    print(results)
+    return results
+
+@app.route('/api/gap_values', methods=['GET'])
+def gap_values():
+    planning_id = get_active_planning_id()
+    if not planning_id:
+        return jsonify({'error': 'No active planning found'}), 404
+
+    gap_values = get_gap_values(planning_id)
+    return jsonify(gap_values)
+
+@app.route('/test', methods=['GET'])
+def test():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    query1 = """
+    SELECT BZ1_NC, BZ2_NC, BZ3_NC, BZ4_NC, DZ1_NC, DZ2_NC, DZ3_NC 
+    FROM L8Ext1 ORDER BY s_no DESC LIMIT 1
+    """
+    cursor.execute(query1)
+    data1 = cursor.fetchall()
+
+    query2 = """
+    SELECT BZ1_NC, BZ2_NC, BZ3_NC, BZ4_NC, DZ1_NC, DZ2_NC, DZ3_NC 
+    FROM L8Ext2 ORDER BY s_no DESC LIMIT 1
+    """
+    cursor.execute(query2)
+    data2 = cursor.fetchall()
+
+    query3 = """
+    SELECT BZ1_NC, BZ2_NC, BZ3_NC, BZ4_NC, DZ1_NC, DZ2_NC 
+    FROM L8Ext3 ORDER BY s_no DESC LIMIT 1
+    """
+    cursor.execute(query3)
+    data3 = cursor.fetchall()
+
+    query4 = """
+    SELECT BZ1_NC, BZ2_NC, BZ3_NC, BZ4_NC, DZ1_NC, DZ2_NC, DZ3_NC 
+    FROM L8Ext4 ORDER BY s_no DESC LIMIT 1
+    """
+    cursor.execute(query4)
+    data4 = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+
+    # Combine data into a single JSON format
+    data = {
+        "L8Ext1": data1[0] if data1 else None,
+        "L8Ext2": data2[0] if data2 else None,
+        "L8Ext3": data3[0] if data3 else None,
+        "L8Ext4": data4[0] if data4 else None
+    }
+
+    return jsonify(data)
+
+
+def generate_sql_queries(bit_o, bit_n, machine, col, col2, start_time, end_time):
+    queries = []
+    for i in range(len(col)):
+        if bit_o[col2[i]] == 0 and bit_n[col2[i]] == 1:
+            queries.append(f"INSERT INTO params_ng (start_time, machine, machine_zone, status) VALUES ('{start_time}', '{machine}', '{col[i]}', 'Open')")
+        elif bit_o[col2[i]] == 1 and bit_n[col2[i]] == 0:
+            queries.append(f"UPDATE params_ng SET end_time = '{end_time}', duration = TIMESTAMPDIFF(SECOND, start_time, '{end_time}'), status = 'Closed' WHERE machine = '{machine}' AND machine_zone = '{col[i]}' AND status = 'Open'")
+    return queries
+
+def update_params_ng():
+    while True:
+        with app.app_context():
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                col_common = ['BZ1', 'BZ2', 'BZ3', 'BZ4', 'DZ1', 'DZ2', 'DZ3']
+                col2_common = ['BZ1_NC', 'BZ2_NC', 'BZ3_NC', 'BZ4_NC', 'DZ1_NC', 'DZ2_NC', 'DZ3_NC']
+                
+                col_l8ext3 = ['BZ1', 'BZ2', 'BZ3', 'BZ4', 'DZ1', 'DZ2']
+                col2_l8ext3 = ['BZ1_NC', 'BZ2_NC', 'BZ3_NC', 'BZ4_NC', 'DZ1_NC', 'DZ2_NC']
+
+                now = datetime.now()
+                start_time = end_time = now.strftime('%Y-%m-%d %H:%M:%S')
+
+                tables = ['L8Ext1', 'L8Ext2', 'L8Ext3', 'L8Ext4']
+                
+                bit_oe = []
+                bit_ne = []
+                cursor.execute(f"SELECT BZ1_NC, BZ2_NC, BZ3_NC, BZ4_NC, DZ1_NC, DZ2_NC, DZ3_NC FROM L8Ext4 ORDER BY s_no DESC LIMIT 5")
+                data = cursor.fetchone()
+                mysql.connection.commit()
+                cursor.close()
+                print(f'The Values are: {data}')
+                
+        time.sleep(1)  # Wait for 1 second before repeating
+
+
+# def test():
+#     while True:
+#         print("Success 1")
+#         time.sleep(1)
+
+@app.route('/api/availability', methods=['GET'])
+def get_availability():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    query = """
+    SELECT availability AS availability FROM L8_Running_Status
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    rows = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    availability = rows['availability']
+    availability_data = "{:.2f}".format(availability)
+    return jsonify({"availability": availability_data})
+
+@app.route('/api/performance', methods=['GET'])
+def get_performance():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    query = """
+    SELECT performance AS performance FROM L8_Running_Status
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    rows = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    performance = rows['performance']
+    performance_data = "{:.2f}".format(performance)
+    return jsonify({"performance": performance_data})
+
+@app.route('/api/quality_rate', methods=['GET'])
+def get_quality_rate():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    query = """
+    SELECT quality_rate AS quality_rate FROM L8_Running_Status
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    rows = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    quality_rate = rows['quality_rate']
+    quality = "{:.2f}".format(quality_rate)
+    return jsonify({"quality": quality})
+
+@app.route('/api/pms_table', methods=['GET'])
+def get_pms_table():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    query = """
+    SELECT plan_id, part_name, model, part_length, part_wt, cutter1_count, cutter2_count, startup_rej, line_rej, availability, performance, quality_rate, oee FROM L8_Running_Status
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return rows 
+def pms_table():
+    rows = get_pms_table()
+    return jsonify(rows)
+
+@app.route('/api/oee_chart', methods=['GET'])
+def get_oee_chart():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    query = """
+    SELECT availability as availability, performance as performance, quality_rate as quality_rate, oee as oee FROM L8_Running_Status
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    rows = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    availability = rows['availability']
+    performance = rows['performance']
+    quality_rate = rows['quality_rate']
+    oee = rows['oee']
+    avail_data = f"{availability:.2f}"
+    perf_data = f"{performance:.2f}"
+    qual_data = f"{quality_rate:.2f}"
+    oee_data = f"{oee:.2f}"
+    data = {"OEE": oee_data, "Availability" : avail_data, "Quality Rate": qual_data, "Performance": perf_data}
+    return jsonify([data])
+
+@app.route('/api/oee', methods=['GET'])
+def get_oee():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    query = """
+    SELECT oee AS oee FROM L8_Running_Status
+    ORDER BY s_no DESC
+    LIMIT 1
+    """
+    cursor.execute(query)
+    rows = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    oee_value = rows['oee']
+    formatted_oee = "{:.2f}".format(oee_value)
+    return jsonify({"oee": formatted_oee})
+
+@app.route('/api/line_chart', methods=['GET'])
+def get_line_chart():
+    # Retrieve start_date and end_date from the query parameters
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    shift = request.args.get('shift')
+
+    if not start_date or not end_date:
+        return jsonify({"error": "Missing start_date or end_date"}), 400
+
+    cur = mysql.connection.cursor()
+    query = """
+        SELECT 
+            DATE(timestamp) as date,
+            MAX(availability) as max_availability, 
+            MAX(performance) as max_performance, 
+            MAX(quality_rate) as max_quality_rate,
+            MAX(oee) as max_oee  
+        FROM L8_Running_Status
+        WHERE shift = %s AND timestamp BETWEEN %s AND %s
+        GROUP BY DATE(timestamp)
+    """
+    cur.execute(query, (shift, start_date + ' 00:00:00', end_date + ' 23:59:59'))
+    data = cur.fetchall()
+    cur.close()
+
+
+    result = []
+    for row in data:
+        result.append({
+            "date": row[0].strftime("%Y-%m-%d"),
+            "max_availability": row[1],
+            "max_performance": row[2],
+            "max_quality_rate": row[3],
+            "max_oee": row[4]
+        })
+
+    return jsonify(result)
+
+@app.route('/api/test_chart', methods=['GET'])
+def get_test_chart():
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    shift = request.args.get('shift')
+    
+    print("Data is ", start_date, "end Date is", end_date, "shift is ", shift)
+    if not start_date or not end_date:
+        return jsonify({"error": "Missing start_date or end_date"}), 400
+    
+    start_datetime = f"{start_date} 00:00:00"
+    end_datetime = f"{end_date} 23:59:59"
+
+    # Construct base query
+    query = """
+        SELECT 
+            DATE(timestamp) as date,
+            part_name as part_name,
+            model as model
+        FROM L8_Running_Status
+            WHERE timestamp BETWEEN %s AND %s
+    """
+    
+    # Append shift filter if provided
+    if shift:
+        query += " AND (shift = %s OR shift = 'NA')"
+    
+    query += """
+            GROUP BY DATE(timestamp), part_name, model
+            """
+    
+    # Prepare query parameters
+    params = [start_datetime, end_datetime]
+    if shift:
+        params.append(shift)
+    
+    # Execute query
+    cur = mysql.connection.cursor()
+    cur.execute(query, params)
+    data = cur.fetchall()
+    cur.close()
+    print("Fetched data:", data)
+    
+    if not data:
+        print("No data found")
+        return jsonify({"error": "No data found"}), 404
+
+    result = []
+    for row in data:
+        result.append({
+            "Date": row[0].strftime("%Y-%m-%d"),
+            "Part Name": row[1],
+            "Model": row[2],
+        })
+    
+    print("Result:", result)
+    return jsonify(result)
+
+@app.route('/api/yield_filter_chart', methods=['GET'])
+def get_yield_filter_chart():
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    shift = request.args.get('shift')
+
+    if not start_date or not end_date:
+        return jsonify({"error": "Missing start_date or end_date"}), 400
+    
+    start_datetime = f"{start_date} 00:00:00"
+    end_datetime = f"{end_date} 23:59:59"
+
+    cur = mysql.connection.cursor()
+    query = """
+        SELECT 
+            DATE(timestamp) AS date,
+            MAX(startup_rej) AS max_startup_rej,
+            MAX(line_rej) AS max_line_rej,
+            MAX(part_wt) AS part_wt,
+            MAX(cutter1_count) AS cutter1,
+            MAX(cutter2_count) AS cutter2,
+            MAX(rej_count) AS rej_count
+        FROM L8_Running_Status
+        WHERE timestamp BETWEEN %s AND %s
+    """
+    
+    params = [start_datetime, end_datetime]
+    
+    if shift:
+        shift_list = shift.split(',')
+        placeholders = ', '.join(['%s'] * len(shift_list))
+        query += f" AND (shift IN ({placeholders}) OR shift = 'NA')"
+        params.extend(shift_list)
+    
+    query += " GROUP BY DATE(timestamp)"
+
+    cur.execute(query, params)
+    data = cur.fetchall()
+    cur.close()
+
+    result = []
+    for row in data:
+        date = row[0]
+        start = row[1]
+        line = row[2]
+        part_wt = row[3] / 1000  # Convert part weight to kg
+        cutter1 = row[4]
+        cutter2 = row[5]
+        rej_count = row[6]
+
+        countTotal = cutter1 + cutter2
+        prod_count = countTotal - rej_count
+        line_count = line / part_wt
+        start_count = start / part_wt
+        actual_prod = prod_count - line_count
+        total = start_count + prod_count
+        rej = start_count + line_count
+        yield_per = (actual_prod * 100) / total
+        rej_per = (rej * 100) / total
+        consumed = actual_prod * part_wt + start + line
+
+        result.append({
+            "date": date.strftime('%Y-%m-%d'),
+            "Yield Percentage": f"{yield_per:.2f}",
+            "Rejection Percentage": f"{rej_per:.2f}",
+            "Line Rejection": f"{line:.2f}",
+            "Startup Rejection": f"{start:.2f}",
+            "Material Consumed": f"{consumed:.2f}"
+        })
+
+    return jsonify(result)
+
+@app.route('/api/downtime_filter', methods=['GET'])
+def downtime_filter():
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+
+    if not start_date or not end_date:
+        return jsonify({"error": "Missing start_date or end_date parameters"}), 400
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    start_datetime = f"{start_date} 00:00:00"
+    end_datetime = f"{end_date} 23:59:59"
+
+    
+    query = """
+    SELECT 
+        DATE(downtime1_start) as date,
+        COALESCE(SUM(TIME_TO_SEC(downtime1_duration)), 0) / 60 as downtime1_duration,
+        COALESCE(SUM(TIME_TO_SEC(downtime2_duration)), 0) / 60 as downtime2_duration,
+        COALESCE(SUM(TIME_TO_SEC(downtime3_duration)), 0) / 60 as downtime3_duration,
+        COALESCE(SUM(TIME_TO_SEC(downtime4_duration)), 0) / 60 as downtime4_duration,
+        COALESCE(SUM(TIME_TO_SEC(downtime5_duration)), 0) / 60 as downtime5_duration,
+        (COALESCE(SUM(TIME_TO_SEC(downtime1_duration)), 0) +
+         COALESCE(SUM(TIME_TO_SEC(downtime2_duration)), 0) +
+         COALESCE(SUM(TIME_TO_SEC(downtime3_duration)), 0) +
+         COALESCE(SUM(TIME_TO_SEC(downtime4_duration)), 0) +
+         COALESCE(SUM(TIME_TO_SEC(downtime5_duration)), 0)) / 60 as total_downtime
+    FROM planning 
+    WHERE downtime1_start BETWEEN %s AND %s
+    GROUP BY DATE(downtime1_start)
+    ORDER BY DATE(downtime1_start)
+    """
+
+    cursor.execute(query, (start_datetime, end_datetime))
+    downtime_data = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    if not downtime_data:
+        return jsonify({"error": "No active downtime found within the specified date range"}), 404
+
+    return jsonify(downtime_data)
+
+
+
+
+
+@app.route('/api/rejection', methods=['GET'])
+def get_rej_data():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    query1 = """
+        SELECT id
+        FROM planning
+        WHERE status = 'active';
+    """
+    cursor.execute(query1)
+
+    results = cursor.fetchall()
+
+    active_plan_ids = results[0]
+    id = active_plan_ids['id']
+
+    query2 = """
+            SELECT 
+                MAX(startup_rej) AS max_startup_rej,
+                MAX(line_rej) AS max_line_rej,
+                MAX(part_wt) AS part_wt,
+                MAX(cutter1_count) AS cutter1,
+                MAX(cutter2_count) AS cutter2,
+                MAX(rej_count) AS rej_count,
+                MIN(timestamp) AS first_timestamp,
+                MAX(timestamp) AS second_timestamp
+            FROM L8_Running_Status
+            WHERE plan_id = %s;
+        """
+
+    cursor.execute(query2, (id))
+    max_values = cursor.fetchone()
+    first_timestamp = max_values['first_timestamp']
+    start = max_values['max_startup_rej']
+    line = max_values['max_line_rej']
+    part_wt = max_values['part_wt']/1000
+    countTotal = max_values['cutter1'] + max_values['cutter2']
+    rej_count = max_values['rej_count']
+    good_count = countTotal-rej_count
+    line_count= line/part_wt
+    start_count = start/part_wt
+    actual_prod = good_count-line_count
+    total = start_count+good_count
+    rej= start_count+line_count
+    yield_per = (actual_prod*100)/(total)
+    rej_per = (rej*100)/(total)
+    yield_per_formatted = f"{yield_per:.2f}"
+    rej_per_formatted = f"{rej_per:.2f}"
+    cursor.close()
+    conn.close()
+
+    # Return the result as JSON
+    return jsonify({
+        "yield": yield_per_formatted,
+        "rejection": rej_per_formatted,
+        "timestamp": first_timestamp,
+        "startup": start,
+        "line_rej": line,
+        "actual_count": actual_prod,
+        "production": good_count
+    })
+
+@app.route('/api/downtime', methods= ['GET'] )
+def downtime():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    query ="""
+    SELECT 
+        downtime1, type1, downtime1_start, downtime1_stop, downtime1_duration,
+        downtime2, type2, downtime2_start, downtime2_stop, downtime2_duration,
+        downtime3, type3, downtime3_start, downtime3_stop, downtime3_duration,
+        downtime4, type4, downtime4_start, downtime4_stop, downtime4_duration,
+        downtime5, type5, downtime5_start, downtime5_stop, downtime5_duration
+    FROM planning where status= 'active'
+    """
+    cursor.execute(query)
+
+    downtime_data = cursor.fetchone()
+
+    if not downtime_data:
+        return jsonify({"error": "No active downtime found"}), 404
+    
+    def format_datetime(dt):
+        return dt.isoformat() if dt else None
+
+    def format_timedelta(td):
+        return str(td) if td else "00:00:00"
+
+    downtimes = {
+        f"downtime{i+1}": {
+            "type": downtime_data.get(f"type{i+1}"),
+            "start": format_datetime(downtime_data.get(f"downtime{i+1}_start")),
+            "stop": format_datetime(downtime_data.get(f"downtime{i+1}_stop")),
+            "duration": format_timedelta(downtime_data.get(f"downtime{i+1}_duration"))
+        }
+        for i in range(5)
+        if downtime_data.get(f"downtime{i+1}") == 'Yes'
+    }
+    cursor.close()
+    conn.close()
+    return jsonify({
+        "abc": downtimes
+    })
+
+@app.route('/api/prod_report', methods=['POST', 'GET'])
+def get_prod_report():
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    shift = request.args.get('shift')
+    
+    print("Data is ", start_date, "end Date is", end_date, "shift is ", shift)
+    if not start_date or not end_date:
+        return jsonify({"error": "Missing start_date or end_date"}), 400
+
+    start_datetime = f"{start_date} 00:00:00"
+    end_datetime = f"{end_date} 23:59:59"
+
+    query = """
+        SELECT 
+            DATE(timestamp) as date,
+            plan_id as plan_id,
+            part_name as Part_name,
+            model as Model, 
+            MAX(availability) as Availability,
+            MAX(performance) as Performance,
+            MAX(quality_rate) as Quality_Rate,
+            MAX(oee) as OEE,
+            MAX(line_rej) as Line_rej,
+            MAX(startup_rej) as Startup_rej,
+            MAX(cutter1_count) as count1,
+            MAX(cutter2_count) as count2,
+            MAX(part_wt) as part_wt
+        FROM L8_Running_Status
+            WHERE timestamp BETWEEN %s AND %s
+    """
+    
+    if shift:
+        query += " AND (shift = %s OR shift = 'NA')"
+    
+    query += """
+            GROUP BY DATE(timestamp), part_name, model, plan_id
+            """
+    params = [start_datetime, end_datetime]
+    if shift:
+        params.append(shift)
+    
+    cur = mysql.connection.cursor()
+    cur.execute(query, params)
+    data = cur.fetchall()
+    cur.close()
+
+    if not data:
+        print("No data found")
+        return jsonify({"error": "No data found"}), 404
+
+    result = []
+    for row in data:
+        consumption = (
+            row[8] + 
+            row[9] / 1000 + 
+            (row[10] + row[11]) * row[12] / 1000 - 
+            row[9] / 1000 
+        )
+        consumption= f"{consumption:.2f}"
+        Availability= f"{row[4]:.2f}"
+        Performance= f"{row[5]:.2f}"
+        Quality_Rate= f"{row[6]:.2f}"
+        OEE= f"{row[7]:.2f}"
+        Startup= f"{row[8]:.2f}"
+        Line= f"{row[9]:.2f}"
+        
+        result.append({
+            "Date": row[0].strftime("%Y-%m-%d"),
+            "Plan ID": row[1],
+            "Part Name": row[2],
+            "Model": row[3],
+            "Availability": Availability,
+            "Performance": Performance,
+            "Quality Rate": Quality_Rate,
+            "OEE":OEE,
+            "Startup Rejection": Startup,
+            "Line Rejection": Line,
+            "Consumption": consumption,
+        })
+    return jsonify(result)
+
+if __name__ == '__main__':
+    app.secret_key = 'AnkitHarshAmit@123'
+    # threading.Thread(target=update_params_ng, daemon=True).start()
+    app.run(host='0.0.0.0', port=5000, debug=False)
